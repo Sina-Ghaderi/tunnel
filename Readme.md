@@ -98,16 +98,16 @@ type DevicePermissions struct {
 **MultiQueue:** Enables or disables multiqueue support, which can improve performance by allowing multiple queues for packet processing.  
 Following is the Linux MultiQueue documentation:
 
-> From version 3.8, Linux supports multiqueue tuntap which can uses multiple  
-> file descriptors (queues) to parallelize packets sending or receiving. The  
-> device allocation is the same as before, and if user wants to create multiple  
-> queues, TUNSETIFF with the same device name must be called many times with  
+> From version 3.8, Linux supports multiqueue tuntap which can uses multiple
+> file descriptors (queues) to parallelize packets sending or receiving. The
+> device allocation is the same as before, and if user wants to create multiple
+> queues, TUNSETIFF with the same device name must be called many times with
 > IFF_MULTI_QUEUE flag.  
 > 
-> char *dev should be the name of the device, queues is the number of queues to  
-> be created, fds is used to store and return the file descriptors (queues)  
-> created to the caller. Each file descriptor were served as the interface of a  
-> queue which could be accessed by userspace.  
+> char *dev should be the name of the device, queues is the number of queues to
+> be created, fds is used to store and return the file descriptors (queues)
+> created to the caller. Each file descriptor were served as the interface of a
+> queue which could be accessed by userspace.
 
 
 **DisableGsoGro:** Indicates whether to disable gso/gro and VnetHDR
