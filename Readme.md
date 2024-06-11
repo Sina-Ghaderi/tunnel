@@ -103,7 +103,6 @@ Following is the Linux MultiQueue documentation:
 > device allocation is the same as before, and if user wants to create multiple
 > queues, TUNSETIFF with the same device name must be called many times with
 > IFF_MULTI_QUEUE flag.  
-> 
 > char *dev should be the name of the device, queues is the number of queues to
 > be created, fds is used to store and return the file descriptors (queues)
 > created to the caller. Each file descriptor were served as the interface of a
