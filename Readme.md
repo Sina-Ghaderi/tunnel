@@ -9,8 +9,8 @@ generic segment/receive offloads ([gso](https://docs.kernel.org/networking/segme
 - reduce number of read/write syscalls when gso/gro is enabled
 
 > [!NOTE]  
-> Tunnel udp offloading was added in linux v6.2, for prior versions udp offloading is disabled  
-> This package does not implement tap device
+> Tunnel udp offloading was added in linux v6.2, for prior versions udp offloading is disabled.  
+> This package does not implement tap device.
 
 ### How does gso/gro improve performance?
 
