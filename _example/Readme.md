@@ -13,7 +13,7 @@
 > this daemon is not suitable for production environment
 
 
-
+usage of daemon binary:
 ```console
 # ./daemon -h
 Usage of ./daemon:
