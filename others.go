@@ -1,12 +1,14 @@
 //go:build !linux
 
-package tun
+package tunnel
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type Config struct{}
 type Iface struct{}
 
 func New(config Config) (*Iface, error) {
-	return &Iface{}, fmt.Errorf("tunnel: unsupported operation system")
+	return nil, fmt.Errorf("tunnel: unsupported operation system")
 }

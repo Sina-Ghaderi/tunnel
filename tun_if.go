@@ -1,20 +1,20 @@
 //go:build linux
 
-package tun
+package tunnel
 
 import "io"
 
 type Config struct {
-	Name          string
-	Persist       bool
-	Permissions   *DevicePermissions
-	MultiQueue    bool
-	DisableVetHDR bool
+	Name          string             // Name of the tunnel interface (e.g., "tun0")
+	Persist       bool               // Whether the tunnel interface should persist (remain after being closed)
+	Permissions   *DevicePermissions // Permissions for the tunnel device
+	MultiQueue    bool               // Whether to enable multi-queue support
+	DisableGsoGro bool               // Whether to disable gso/gro and VnetHDR
 }
 
 type DevicePermissions struct {
-	Owner uint
-	Group uint
+	Owner uint // UID of the owner
+	Group uint // GID of the group
 }
 
 type Iface struct {

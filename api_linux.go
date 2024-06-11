@@ -1,6 +1,6 @@
 //go:build linux
 
-package tun
+package tunnel
 
 import (
 	"errors"
@@ -91,7 +91,7 @@ func setupTunDevice(nfd int, config Config) (*Iface, error) {
 		flags |= unix.IFF_MULTI_QUEUE
 	}
 
-	if !config.DisableVetHDR {
+	if !config.DisableGsoGro {
 		flags |= unix.IFF_VNET_HDR
 	}
 

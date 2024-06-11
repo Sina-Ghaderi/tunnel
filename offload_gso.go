@@ -1,6 +1,6 @@
 //go:build linux
 
-package tun
+package tunnel
 
 import (
 	"encoding/binary"
