@@ -22,7 +22,7 @@ const rcveBuffLen = 1 << 14
 const sendBuffLen = 1 << 14
 const pktBuffArrs = 1 << 6
 
-type readWriteFuncHandler [2]func(*tunDevice, []byte) (int, error)
+type readWriteHandler [2]func(*tunDevice, []byte) (int, error)
 type readBuffers struct {
 	virtbuff,
 	copybuff, unreadPtr []byte
@@ -39,7 +39,7 @@ type writeBuffers struct {
 
 type platformMethods struct{ name string }
 type tunDevice struct {
-	rwHandler     readWriteFuncHandler
+	rwHandler     readWriteHandler
 	tunReadMux    sync.Mutex
 	tunWriteMux   sync.Mutex
 	file          *os.File

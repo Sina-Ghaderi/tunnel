@@ -328,7 +328,7 @@ func ipHeadersCanCoalesce(pktA, pktB []byte) bool {
 	return true
 }
 
-func (v *tunDevice) sliceIPv4Packet(buff []byte) (int, error) {
+func (v *tunDevice) bufferIPv4Packet(buff []byte) (int, error) {
 
 	if len(buff) < minIPv4packetSize {
 		return 0, fmt.Errorf("tunnel: virtio write: short ipv4 header write")
@@ -349,7 +349,7 @@ func (v *tunDevice) sliceIPv4Packet(buff []byte) (int, error) {
 	return v.copyFromUser(buff, totalLen), nil
 }
 
-func (v *tunDevice) sliceIPv6Packet(buff []byte) (int, error) {
+func (v *tunDevice) bufferIPv6Packet(buff []byte) (int, error) {
 	if len(buff) < minIPv6packetSize {
 		return 0, fmt.Errorf("tunnel: virtio write: short ipv4 packet write")
 	}
@@ -367,29 +367,42 @@ func (v *tunDevice) sliceIPv6Packet(buff []byte) (int, error) {
 	return v.copyFromUser(buff, totalLen), nil
 }
 
+func (v *tunDevice) bufferPackets(buff []byte) (int, error) {
+	switch buff[0] >> 4 {
+	case ipVersion4:
+		done, err := v.bufferIPv4Packet(buff)
+		if err != nil {
+			return 0, err
+		}
+		return done, nil
+
+	case ipVersion6:
+		done, err := v.bufferIPv6Packet(buff)
+		if err != nil {
+			return 0, err
+		}
+		return done, nil
+	}
+
+	return 0, fmt.Errorf("tunnel: virtio write: write an invalid packet")
+}
+
 func (v *tunDevice) slicePackets(buff []byte) (int, error) {
 	var nextPacketIndex int
-	for len(buff) > 0 {
-		switch buff[0] >> 4 {
-		case ipVersion4:
-			done, err := v.sliceIPv4Packet(buff)
-			if err != nil {
-				return 0, err
-			}
-			nextPacketIndex += done
-			buff = buff[done:]
+	done, err := v.bufferPackets(buff)
+	if err != nil {
+		return nextPacketIndex, err
+	}
+	nextPacketIndex += done
+	buff = buff[done:]
 
-		case ipVersion6:
-			done, err := v.sliceIPv6Packet(buff)
-			if err != nil {
-				return 0, err
-			}
-			nextPacketIndex += done
-			buff = buff[done:]
-		default:
-			return nextPacketIndex,
-				fmt.Errorf("tunnel: virtio write: write an invalid packet")
+	for len(buff) > 0 {
+		done, err := v.bufferPackets(buff)
+		if err != nil {
+			return nextPacketIndex, nil
 		}
+		nextPacketIndex += done
+		buff = buff[done:]
 	}
 	return nextPacketIndex, nil
 }
