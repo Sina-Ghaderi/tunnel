@@ -16,32 +16,25 @@ const tunModuleCharPath = "/dev/net/tun"
 const tcpOffloads = unix.TUN_F_CSUM | unix.TUN_F_TSO4 | unix.TUN_F_TSO6
 const udpOffloads = unix.TUN_F_USO4 | unix.TUN_F_USO6
 const maxPacketLen = 1<<16 - 1
-const virtBuffLen = maxPacketLen + virtioNetHdrLen
+const virtioBuffLen = maxPacketLen + virtioNetHdrLen
 
-const rcv_buffLen = 1 << 14
-const snd_buffLen = 1 << 14
-const pkt_buffNum = 1 << 6
+const rcveBuffLen = 1 << 14
+const sendBuffLen = 1 << 14
+const pktBuffArrs = 1 << 6
 
 type readWriteFuncHandler [2]func(*tunDevice, []byte) (int, error)
 type readBuffers struct {
 	virtbuff,
-	copybuff,
-	unread_p []byte
+	copybuff, unreadPtr []byte
 }
 
 type writeBuffers struct {
 	virtbuff    []byte
-	pks_buff    [][]byte
-	pkt_idx     []int
+	pktsbuff    [][]byte
+	pktIndex    []int
 	buff_pos    int
-	frag_pkt    *fragmented_pkt
 	tcpGroTable *tcpGROTable
 	udpGroTable *udpGROTable
-}
-
-type fragmented_pkt struct {
-	buff     []byte
-	p_offset int
 }
 
 type platformMethods struct{ name string }
@@ -192,15 +185,14 @@ func (p *tunDevice) setTunnelvnetHdr(name string) error {
 
 	if vnethdr {
 		p.rwHandler[0], p.rwHandler[1] = vnetHdrRead, vnetHdrWrite
-		p.r_buff, p.w_buff = &readBuffers{}, &writeBuffers{}
-		p.r_buff.virtbuff = make([]byte, virtBuffLen)
-		p.r_buff.copybuff = make([]byte, rcv_buffLen)
-		p.w_buff.virtbuff = make([]byte, snd_buffLen)
-		p.w_buff.pks_buff = make([][]byte, 0, pkt_buffNum)
-		p.w_buff.pkt_idx = make([]int, 0, pkt_buffNum)
+		p.r_buff, p.w_buff = new(readBuffers), new(writeBuffers)
+		p.r_buff.virtbuff = make([]byte, virtioBuffLen)
+		p.r_buff.copybuff = make([]byte, rcveBuffLen)
+		p.w_buff.virtbuff = make([]byte, sendBuffLen)
+		p.w_buff.pktsbuff = make([][]byte, 0, pktBuffArrs)
+		p.w_buff.pktIndex = make([]int, 0, pktBuffArrs)
 		p.w_buff.tcpGroTable = newTCPGROTable()
 		p.w_buff.udpGroTable = newUDPGROTable()
-		p.w_buff.frag_pkt = &fragmented_pkt{buff: make([]byte, maxPacketLen)}
 	}
 
 	return err
@@ -211,16 +203,15 @@ func vnetHdrRead(dev *tunDevice, buff []byte) (int, error) {
 	defer dev.tunReadMux.Unlock()
 
 	defer func() {
-		if len(dev.r_buff.unread_p) == 0 &&
-			cap(dev.r_buff.copybuff) > rcv_buffLen {
-			dev.r_buff.unread_p = nil
-			dev.r_buff.copybuff =
-				dev.r_buff.copybuff[:rcv_buffLen:rcv_buffLen]
+		if len(dev.r_buff.unreadPtr) == 0 &&
+			cap(dev.r_buff.copybuff) > rcveBuffLen {
+			dev.r_buff.unreadPtr = nil
+			dev.r_buff.copybuff = dev.r_buff.copybuff[:rcveBuffLen:rcveBuffLen]
 		}
 	}()
 
-	cp_from_buff := copy(buff, dev.r_buff.unread_p)
-	dev.r_buff.unread_p = dev.r_buff.unread_p[cp_from_buff:]
+	cp_from_buff := copy(buff, dev.r_buff.unreadPtr)
+	dev.r_buff.unreadPtr = dev.r_buff.unreadPtr[cp_from_buff:]
 	if cp_from_buff == len(buff) {
 		return cp_from_buff, nil
 	}
@@ -235,10 +226,9 @@ func vnetHdrRead(dev *tunDevice, buff []byte) (int, error) {
 	}
 
 	nb, err := dev.virtioRead(index)
-	dev.r_buff.unread_p = dev.r_buff.copybuff[:nb]
-	cp_left := copy(buff[cp_from_buff:], dev.r_buff.unread_p)
-	dev.r_buff.unread_p = dev.r_buff.unread_p[cp_left:]
-
+	dev.r_buff.unreadPtr = dev.r_buff.copybuff[:nb]
+	cp_left := copy(buff[cp_from_buff:], dev.r_buff.unreadPtr)
+	dev.r_buff.unreadPtr = dev.r_buff.unreadPtr[cp_left:]
 	return cp_from_buff + cp_left, err
 }
 
@@ -249,12 +239,11 @@ func vnetHdrWrite(dev *tunDevice, buff []byte) (int, error) {
 		dev.w_buff.tcpGroTable.reset()
 		dev.w_buff.udpGroTable.reset()
 		dev.w_buff.buff_pos = 0
-		if len(dev.w_buff.virtbuff) > snd_buffLen {
-			dev.w_buff.virtbuff =
-				dev.w_buff.virtbuff[:snd_buffLen:snd_buffLen]
+		if len(dev.w_buff.virtbuff) > sendBuffLen {
+			dev.w_buff.virtbuff = dev.w_buff.virtbuff[:sendBuffLen:sendBuffLen]
 		}
-		dev.w_buff.pks_buff = dev.w_buff.pks_buff[:0:pkt_buffNum]
-		dev.w_buff.pkt_idx = dev.w_buff.pkt_idx[:0:pkt_buffNum]
+		dev.w_buff.pktsbuff = dev.w_buff.pktsbuff[:0:pktBuffArrs]
+		dev.w_buff.pktIndex = dev.w_buff.pktIndex[:0:pktBuffArrs]
 	}()
 
 	nw, err := dev.slicePackets(buff)
@@ -265,8 +254,8 @@ func vnetHdrWrite(dev *tunDevice, buff []byte) (int, error) {
 		return 0, err
 	}
 
-	for _, pkt_index := range dev.w_buff.pkt_idx {
-		_, err := dev.file.Write(dev.w_buff.pks_buff[pkt_index][:])
+	for _, pktIndex := range dev.w_buff.pktIndex {
+		_, err := dev.file.Write(dev.w_buff.pktsbuff[pktIndex][:])
 		if errors.Is(err, syscall.EBADFD) {
 			return 0, os.ErrClosed
 		}

@@ -42,7 +42,7 @@ type virtioNetHdr struct {
 
 func (v *virtioNetHdr) decodeVirtioHeader(b []byte) error {
 	if len(b) < virtioNetHdrLen {
-		return errors.New("decode VirtioHeader: short buffer")
+		return errors.New("decode virtio header: short buffer")
 	}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(v)),
 		virtioNetHdrLen), b[:virtioNetHdrLen])
@@ -51,7 +51,7 @@ func (v *virtioNetHdr) decodeVirtioHeader(b []byte) error {
 
 func (v *virtioNetHdr) encodeVirtioHeader(b []byte) error {
 	if len(b) < virtioNetHdrLen {
-		return errors.New("encode VirtioHeader: short buffer")
+		return errors.New("encode virtio header: short buffer")
 	}
 	copy(b[:virtioNetHdrLen],
 		unsafe.Slice((*byte)(unsafe.Pointer(v)), virtioNetHdrLen))
@@ -178,7 +178,7 @@ func (p *tunDevice) virtioSplitGso(buff []byte, hdr virtioNetHdr) (int, error) {
 		alloc_pt := num_bytes + totalLen
 
 		if alloc_pt > len(p.r_buff.copybuff) {
-			alloc := int(math.Max(float64(alloc_pt-len(p.r_buff.copybuff)), rcv_buffLen))
+			alloc := int(math.Max(float64(alloc_pt-len(p.r_buff.copybuff)), rcveBuffLen))
 			p.r_buff.copybuff = append(p.r_buff.copybuff, make([]byte, alloc)...)
 			p.r_buff.copybuff = p.r_buff.copybuff[:cap(p.r_buff.copybuff)]
 		}

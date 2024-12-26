@@ -47,7 +47,7 @@ const (
 
 const ipv4FlagMoreFragments uint8 = 0x20
 const udpHeaderLen = 0x08
-const maxIPv4HdrLen = 0x3c
+const maxIPv4HeaderLen = 0x3c
 
 type tcpFlowKey struct {
 	srcAddr, dstAddr [16]byte
@@ -94,11 +94,11 @@ type udpGROTable struct {
 
 func newUDPGROTable() *udpGROTable {
 	u := &udpGROTable{
-		itemsByFlow: make(map[udpFlowKey][]udpGROItem, pkt_buffNum),
-		itemsPool:   make([][]udpGROItem, pkt_buffNum),
+		itemsByFlow: make(map[udpFlowKey][]udpGROItem, pktBuffArrs),
+		itemsPool:   make([][]udpGROItem, pktBuffArrs),
 	}
 	for i := range u.itemsPool {
-		u.itemsPool[i] = make([]udpGROItem, 0, pkt_buffNum)
+		u.itemsPool[i] = make([]udpGROItem, 0, pktBuffArrs)
 	}
 	return u
 }
@@ -157,9 +157,9 @@ func (u *udpGROTable) updateAt(item udpGROItem, i int) {
 func (u *udpGROTable) newItems() []udpGROItem {
 	var items []udpGROItem
 	if len(u.itemsPool) == 0 {
-		u.itemsPool = make([][]udpGROItem, pkt_buffNum)
+		u.itemsPool = make([][]udpGROItem, pktBuffArrs)
 		for i := range u.itemsPool {
-			u.itemsPool[i] = make([]udpGROItem, 0, pkt_buffNum)
+			u.itemsPool[i] = make([]udpGROItem, 0, pktBuffArrs)
 		}
 	}
 	items = u.itemsPool[len(u.itemsPool)-1]
@@ -170,7 +170,7 @@ func (u *udpGROTable) newItems() []udpGROItem {
 func (u *udpGROTable) reset() {
 	for k, items := range u.itemsByFlow {
 		items = items[:0]
-		if len(u.itemsPool) < pkt_buffNum {
+		if len(u.itemsPool) < pktBuffArrs {
 			u.itemsPool = append(u.itemsPool, items)
 		}
 
@@ -180,11 +180,11 @@ func (u *udpGROTable) reset() {
 
 func newTCPGROTable() *tcpGROTable {
 	t := &tcpGROTable{
-		itemsByFlow: make(map[tcpFlowKey][]tcpGROItem, pkt_buffNum),
-		itemsPool:   make([][]tcpGROItem, pkt_buffNum),
+		itemsByFlow: make(map[tcpFlowKey][]tcpGROItem, pktBuffArrs),
+		itemsPool:   make([][]tcpGROItem, pktBuffArrs),
 	}
 	for i := range t.itemsPool {
-		t.itemsPool[i] = make([]tcpGROItem, 0, pkt_buffNum)
+		t.itemsPool[i] = make([]tcpGROItem, 0, pktBuffArrs)
 	}
 	return t
 }
@@ -254,9 +254,9 @@ func (t *tcpGROTable) deleteAt(key tcpFlowKey, i int) {
 func (t *tcpGROTable) newItems() []tcpGROItem {
 	var items []tcpGROItem
 	if len(t.itemsPool) == 0 {
-		t.itemsPool = make([][]tcpGROItem, pkt_buffNum)
+		t.itemsPool = make([][]tcpGROItem, pktBuffArrs)
 		for i := range t.itemsPool {
-			t.itemsPool[i] = make([]tcpGROItem, 0, pkt_buffNum)
+			t.itemsPool[i] = make([]tcpGROItem, 0, pktBuffArrs)
 		}
 	}
 	items = t.itemsPool[len(t.itemsPool)-1]
@@ -268,7 +268,7 @@ func (t *tcpGROTable) reset() {
 
 	for k, items := range t.itemsByFlow {
 		items = items[:0]
-		if len(t.itemsPool) < pkt_buffNum {
+		if len(t.itemsPool) < pktBuffArrs {
 			t.itemsPool = append(t.itemsPool, items)
 		}
 		delete(t.itemsByFlow, k)
@@ -328,104 +328,70 @@ func ipHeadersCanCoalesce(pktA, pktB []byte) bool {
 	return true
 }
 
-func (v *tunDevice) slicePackets(buff []byte) (int, error) {
-	var next_pkt int
-	bf_num, buff := v.w_buff.frag_pkt.frag_pkt(buff)
-	next_pkt = next_pkt - bf_num
+func (v *tunDevice) sliceIPv4Packet(buff []byte) (int, error) {
 
+	if len(buff) < minIPv4packetSize {
+		return 0, fmt.Errorf("tunnel: virtio write: short ipv4 header write")
+	}
+
+	headerLen := int(buff[0]&0x0F) << 2
+	if headerLen > maxIPv4HeaderLen || headerLen < minIPv4packetSize {
+		return 0, fmt.Errorf("tunnel: virtio write: invalid ipv4 header len(%d)", headerLen)
+	}
+
+	totalLen := int(binary.BigEndian.Uint16(buff[2:]))
+	if totalLen < minIPv4packetSize || totalLen > maxPacketLen {
+		return 0, fmt.Errorf("tunnel: virtio write: invalid ipv4 packet len(%d)", totalLen)
+	}
+	if totalLen > len(buff) {
+		return 0, fmt.Errorf("tunnel: virtio write: fragmented ipv4 packet")
+	}
+	return v.copyFromUser(buff, totalLen), nil
+}
+
+func (v *tunDevice) sliceIPv6Packet(buff []byte) (int, error) {
+	if len(buff) < minIPv6packetSize {
+		return 0, fmt.Errorf("tunnel: virtio write: short ipv4 packet write")
+	}
+
+	payloadLen := int(binary.BigEndian.Uint16(buff[4:]))
+	totalLen := payloadLen + minIPv6packetSize
+
+	if totalLen > maxPacketLen || totalLen < minIPv6packetSize {
+		return 0,
+			fmt.Errorf("tunnel: virtio write: invalid ipv6 packet len(%d)", totalLen)
+	}
+	if totalLen > len(buff) {
+		return 0, fmt.Errorf("tunnel: virtio write: fragmented ipv6 packet")
+	}
+	return v.copyFromUser(buff, totalLen), nil
+}
+
+func (v *tunDevice) slicePackets(buff []byte) (int, error) {
+	var nextPacketIndex int
 	for len(buff) > 0 {
 		switch buff[0] >> 4 {
 		case ipVersion4:
-			headerLen := int(buff[0]&0x0F) << 2
-			if headerLen > maxIPv4HdrLen {
-				return next_pkt,
-					fmt.Errorf("tunnel: virtio write: invalid ipv4 header len(%d)", headerLen)
+			done, err := v.sliceIPv4Packet(buff)
+			if err != nil {
+				return 0, err
 			}
-			if headerLen < minIPv4packetSize {
-				farg_buffed := v.w_buff.frag_pkt.buff_pkt(buff)
-				next_pkt += farg_buffed
-				buff = buff[farg_buffed:]
-				continue
-			}
-			var totalLen int
-			if len(buff) > 3 {
-				totalLen = int(binary.BigEndian.Uint16(buff[2:]))
-			} else {
-				farg_buffed := v.w_buff.frag_pkt.buff_pkt(buff)
-				next_pkt += farg_buffed
-				buff = buff[farg_buffed:]
-				continue
-			}
-			if totalLen < minIPv4packetSize || totalLen > maxPacketLen {
-				return next_pkt,
-					fmt.Errorf("tunnel: virtio write: invalid ipv4 packet len(%d)", totalLen)
-			}
-			if totalLen > len(buff) {
-				farg_buffed := v.w_buff.frag_pkt.buff_pkt(buff)
-				next_pkt += farg_buffed
-				buff = buff[farg_buffed:]
-				continue
-			}
-			cpdone := v.copyFromUser(buff, totalLen)
-			next_pkt += cpdone
-			buff = buff[cpdone:]
+			nextPacketIndex += done
+			buff = buff[done:]
 
 		case ipVersion6:
-			if len(buff) < minIPv6packetSize {
-				farg_buffed := v.w_buff.frag_pkt.buff_pkt(buff)
-				next_pkt += farg_buffed
-				buff = buff[farg_buffed:]
-				continue
+			done, err := v.sliceIPv6Packet(buff)
+			if err != nil {
+				return 0, err
 			}
-			var totalLen int
-			if len(buff) > 5 {
-				payloadLen := int(binary.BigEndian.Uint16(buff[4:]))
-				totalLen = payloadLen + minIPv6packetSize
-			} else {
-				farg_buffed := v.w_buff.frag_pkt.buff_pkt(buff)
-				next_pkt += farg_buffed
-				buff = buff[farg_buffed:]
-				continue
-			}
-			if totalLen > maxPacketLen {
-				return next_pkt,
-					fmt.Errorf("tunnel: virtio write: invalid ipv6 packet len(%d)", totalLen)
-			}
-			if totalLen > len(buff) {
-				farg_buffed := v.w_buff.frag_pkt.buff_pkt(buff)
-				next_pkt += farg_buffed
-				buff = buff[farg_buffed:]
-				continue
-			}
-			cpdone := v.copyFromUser(buff, totalLen)
-			next_pkt += cpdone
-			buff = buff[cpdone:]
-
+			nextPacketIndex += done
+			buff = buff[done:]
 		default:
-			return next_pkt,
-				fmt.Errorf("tunnel: virtio write: write an invalid ipv4 or ipv6 packet")
+			return nextPacketIndex,
+				fmt.Errorf("tunnel: virtio write: write an invalid packet")
 		}
 	}
-
-	return next_pkt, nil
-}
-
-func (p *fragmented_pkt) buff_pkt(b []byte) int {
-	p.p_offset += copy(p.buff, b)
-	return p.p_offset
-}
-
-func (p *fragmented_pkt) frag_pkt(b []byte) (int, []byte) {
-	if p.p_offset == 0 {
-		return 0, b
-	}
-	rem := len(b)
-	p_bf := p.buff[:p.p_offset]
-	p.p_offset = 0
-	b = append(b, make([]byte, len(p_bf))...)
-	copy(b[len(p_bf):], b[:rem])
-	extra := copy(b, p_bf)
-	return extra, b
+	return nextPacketIndex, nil
 }
 
 func (v *tunDevice) copyFromUser(buff []byte, totalLen int) int {
@@ -436,7 +402,7 @@ func (v *tunDevice) copyFromUser(buff []byte, totalLen int) int {
 	new_pos := ncp + virtioNetHdrLen
 	onepkt := v.w_buff.virtbuff[v.w_buff.buff_pos : v.w_buff.buff_pos+new_pos]
 	onepkt = onepkt[:len(onepkt):len(onepkt)]
-	v.w_buff.pks_buff = append(v.w_buff.pks_buff, onepkt)
+	v.w_buff.pktsbuff = append(v.w_buff.pktsbuff, onepkt)
 	v.w_buff.buff_pos += new_pos
 	return ncp
 }
@@ -446,28 +412,28 @@ func (vs *writeBuffers) growBuffer(alloc_size int) {
 		return
 	}
 
-	al := int(math.Max(float64(alloc_size-len(vs.virtbuff)), snd_buffLen))
+	alloc := int(math.Max(float64(alloc_size-len(vs.virtbuff)), sendBuffLen))
 	arr_ptr := &vs.virtbuff[0]
-	vs.virtbuff = append(vs.virtbuff, make([]byte, al)...)
+	vs.virtbuff = append(vs.virtbuff, make([]byte, alloc)...)
 	vs.virtbuff = vs.virtbuff[:cap(vs.virtbuff)]
 	if arr_ptr == &vs.virtbuff[0] {
 		return
 	}
 	ptr_pos := 0
-	for i := 0; i < len(vs.pks_buff); i++ {
-		b_len := ptr_pos + len(vs.pks_buff[i])
-		onepkt := vs.virtbuff[ptr_pos:b_len]
+	for i := 0; i < len(vs.pktsbuff); i++ {
+		buff_len := ptr_pos + len(vs.pktsbuff[i])
+		onepkt := vs.virtbuff[ptr_pos:buff_len]
 		onepkt = onepkt[:len(onepkt):len(onepkt)]
-		vs.pks_buff[i] = onepkt
-		ptr_pos = b_len
+		vs.pktsbuff[i] = onepkt
+		ptr_pos = buff_len
 	}
 }
 
 func (v *tunDevice) virtioMakeGro() error {
-	for i := range v.w_buff.pks_buff {
+	for i := range v.w_buff.pktsbuff {
 		var result groResult
 
-		groCanDo := v.checkGroCandidate(v.w_buff.pks_buff[i])
+		groCanDo := v.checkGroCandidate(v.w_buff.pktsbuff[i])
 		switch isv6 := false; groCanDo {
 		case tcp4GroCandidate:
 			result = v.w_buff.tcpGRO(i, isv6)
@@ -485,14 +451,14 @@ func (v *tunDevice) virtioMakeGro() error {
 		case groResultNoop:
 			hdr := virtioNetHdr{}
 			err := hdr.encodeVirtioHeader(
-				v.w_buff.pks_buff[i][:])
+				v.w_buff.pktsbuff[i][:])
 
 			if err != nil {
 				return err
 			}
 			fallthrough
 		case groResultTableInsert:
-			v.w_buff.pkt_idx = append(v.w_buff.pkt_idx, i)
+			v.w_buff.pktIndex = append(v.w_buff.pktIndex, i)
 		}
 	}
 
@@ -510,7 +476,7 @@ func (v *tunDevice) virtioMakeGro() error {
 
 func (vs *writeBuffers) tcpGRO(pktI int, isV6 bool) groResult {
 
-	pkt := vs.pks_buff[pktI][virtioNetHdrLen:]
+	pkt := vs.pktsbuff[pktI][virtioNetHdrLen:]
 	if len(pkt) > maxPacketLen {
 		return groResultNoop
 	}
@@ -594,7 +560,7 @@ func (vs *writeBuffers) tcpGRO(pktI int, isV6 bool) groResult {
 func (vs *writeBuffers) tcpPacketsCanCoalesce(pkt []byte, iphLen, tcphLen uint8,
 	seq uint32, pshSet bool, gsoSize uint16, item *tcpGROItem) canCoalesce {
 
-	pktTarget := vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]
+	pktTarget := vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]
 	if tcphLen != item.tcphLen {
 		return coalesceUnavailable
 	}
@@ -640,7 +606,7 @@ func (vs *writeBuffers) coalesceTCPPackets(mode canCoalesce, pkt []byte, pktBuff
 
 	var pktHead []byte
 	headersLen := item.iphLen + item.tcphLen
-	coalescedLen := len(vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]) +
+	coalescedLen := len(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]) +
 		len(pkt) - int(headersLen)
 	if mode == coalescePrepend {
 		pktHead = pkt
@@ -651,7 +617,7 @@ func (vs *writeBuffers) coalesceTCPPackets(mode canCoalesce, pkt []byte, pktBuff
 			return coalescePSHEnding
 		}
 		if item.numMerged == 0 {
-			if !checksumValid(vs.pks_buff[item.bufsIndex][virtioNetHdrLen:],
+			if !checksumValid(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:],
 				item.iphLen, unix.IPPROTO_TCP, isV6) {
 				return coalesceItemInvalidCSum
 			}
@@ -661,19 +627,19 @@ func (vs *writeBuffers) coalesceTCPPackets(mode canCoalesce, pkt []byte, pktBuff
 		}
 		item.sentSeq = seq
 		extendBy := coalescedLen - len(pktHead)
-		vs.pks_buff[pktBuffsIndex] =
-			append(vs.pks_buff[pktBuffsIndex], make([]byte, extendBy)...)
-		copy(vs.pks_buff[pktBuffsIndex][virtioNetHdrLen+len(pkt):],
-			vs.pks_buff[item.bufsIndex][virtioNetHdrLen+int(headersLen):])
-		vs.pks_buff[item.bufsIndex] = vs.pks_buff[pktBuffsIndex]
-		vs.pks_buff[pktBuffsIndex] = vs.pks_buff[item.bufsIndex]
+		vs.pktsbuff[pktBuffsIndex] =
+			append(vs.pktsbuff[pktBuffsIndex], make([]byte, extendBy)...)
+		copy(vs.pktsbuff[pktBuffsIndex][virtioNetHdrLen+len(pkt):],
+			vs.pktsbuff[item.bufsIndex][virtioNetHdrLen+int(headersLen):])
+		vs.pktsbuff[item.bufsIndex] = vs.pktsbuff[pktBuffsIndex]
+		vs.pktsbuff[pktBuffsIndex] = vs.pktsbuff[item.bufsIndex]
 	} else {
-		pktHead = vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]
+		pktHead = vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]
 		if cap(pktHead)-virtioNetHdrLen < coalescedLen {
 			return coalesceInsufficientCap
 		}
 		if item.numMerged == 0 {
-			if !checksumValid(vs.pks_buff[item.bufsIndex][virtioNetHdrLen:],
+			if !checksumValid(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:],
 				item.iphLen, unix.IPPROTO_TCP, isV6) {
 				return coalesceItemInvalidCSum
 			}
@@ -686,9 +652,9 @@ func (vs *writeBuffers) coalesceTCPPackets(mode canCoalesce, pkt []byte, pktBuff
 			pktHead[item.iphLen+tcpFlagsOffset] |= tcpFlagPSH
 		}
 		extendBy := len(pkt) - int(headersLen)
-		vs.pks_buff[item.bufsIndex] =
-			append(vs.pks_buff[item.bufsIndex], make([]byte, extendBy)...)
-		copy(vs.pks_buff[item.bufsIndex][virtioNetHdrLen+len(pktHead):], pkt[headersLen:])
+		vs.pktsbuff[item.bufsIndex] =
+			append(vs.pktsbuff[item.bufsIndex], make([]byte, extendBy)...)
+		copy(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen+len(pktHead):], pkt[headersLen:])
 	}
 
 	if gsoSize > item.gsoSize {
@@ -711,7 +677,7 @@ func (vs *writeBuffers) applyTCPCoalesceAccounting() error {
 					csumStart:  uint16(item.iphLen),
 					csumOffset: 16,
 				}
-				pkt := vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]
+				pkt := vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]
 				if item.key.isV6 {
 					hdr.gsoType = unix.VIRTIO_NET_HDR_GSO_TCPV6
 					binary.BigEndian.PutUint16(pkt[4:],
@@ -723,7 +689,7 @@ func (vs *writeBuffers) applyTCPCoalesceAccounting() error {
 					iphCSum := ^checksum(pkt[:item.iphLen], 0)
 					binary.BigEndian.PutUint16(pkt[10:], iphCSum)
 				}
-				err := hdr.encodeVirtioHeader(vs.pks_buff[item.bufsIndex][:])
+				err := hdr.encodeVirtioHeader(vs.pktsbuff[item.bufsIndex][:])
 				if err != nil {
 					return err
 				}
@@ -734,15 +700,15 @@ func (vs *writeBuffers) applyTCPCoalesceAccounting() error {
 					addrOffset = ipv6SrcAddrOffset
 				}
 				srcAddrAt := virtioNetHdrLen + addrOffset
-				srcAddr := vs.pks_buff[item.bufsIndex][srcAddrAt : srcAddrAt+addrLen]
-				dstAddr := vs.pks_buff[item.bufsIndex][srcAddrAt+addrLen : srcAddrAt+addrLen*2]
+				srcAddr := vs.pktsbuff[item.bufsIndex][srcAddrAt : srcAddrAt+addrLen]
+				dstAddr := vs.pktsbuff[item.bufsIndex][srcAddrAt+addrLen : srcAddrAt+addrLen*2]
 				psum := pseudoHeaderChecksumNoFold(unix.IPPROTO_TCP,
 					srcAddr, dstAddr, uint16(len(pkt)-int(item.iphLen)))
 				binary.BigEndian.PutUint16(
 					pkt[hdr.csumStart+hdr.csumOffset:], checksum([]byte{}, psum))
 			} else {
 				hdr := virtioNetHdr{}
-				err := hdr.encodeVirtioHeader(vs.pks_buff[item.bufsIndex][:])
+				err := hdr.encodeVirtioHeader(vs.pktsbuff[item.bufsIndex][:])
 				if err != nil {
 					return err
 				}
@@ -753,7 +719,7 @@ func (vs *writeBuffers) applyTCPCoalesceAccounting() error {
 }
 
 func (vs *writeBuffers) udpGRO(pktI int, isV6 bool) groResult {
-	pkt := vs.pks_buff[pktI][virtioNetHdrLen:]
+	pkt := vs.pktsbuff[pktI][virtioNetHdrLen:]
 	if len(pkt) > maxPacketLen {
 		return groResultNoop
 	}
@@ -819,7 +785,7 @@ func (vs *writeBuffers) udpGRO(pktI int, isV6 bool) groResult {
 
 func (vs *writeBuffers) udpPacketsCanCoalesce(pkt []byte, iphLen uint8, gsoSize uint16,
 	item *udpGROItem) canCoalesce {
-	pktTarget := vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]
+	pktTarget := vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]
 	if !ipHeadersCanCoalesce(pkt, pktTarget) {
 		return coalesceUnavailable
 	}
@@ -833,9 +799,9 @@ func (vs *writeBuffers) udpPacketsCanCoalesce(pkt []byte, iphLen uint8, gsoSize 
 }
 
 func (vs *writeBuffers) coalesceUDPPackets(pkt []byte, item *udpGROItem, isV6 bool) coalesceResult {
-	pktHead := vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]
+	pktHead := vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]
 	headersLen := item.iphLen + udpHeaderLen
-	coalescedLen := len(vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]) +
+	coalescedLen := len(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]) +
 		len(pkt) - int(headersLen)
 
 	if cap(pktHead)-virtioNetHdrLen < coalescedLen {
@@ -843,7 +809,7 @@ func (vs *writeBuffers) coalesceUDPPackets(pkt []byte, item *udpGROItem, isV6 bo
 	}
 	if item.numMerged == 0 {
 		if item.cSumKnownInvalid ||
-			!checksumValid(vs.pks_buff[item.bufsIndex][virtioNetHdrLen:],
+			!checksumValid(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:],
 				item.iphLen, unix.IPPROTO_UDP, isV6) {
 			return coalesceItemInvalidCSum
 		}
@@ -852,8 +818,8 @@ func (vs *writeBuffers) coalesceUDPPackets(pkt []byte, item *udpGROItem, isV6 bo
 		return coalescePktInvalidCSum
 	}
 	extendBy := len(pkt) - int(headersLen)
-	vs.pks_buff[item.bufsIndex] = append(vs.pks_buff[item.bufsIndex], make([]byte, extendBy)...)
-	copy(vs.pks_buff[item.bufsIndex][virtioNetHdrLen+len(pktHead):], pkt[headersLen:])
+	vs.pktsbuff[item.bufsIndex] = append(vs.pktsbuff[item.bufsIndex], make([]byte, extendBy)...)
+	copy(vs.pktsbuff[item.bufsIndex][virtioNetHdrLen+len(pktHead):], pkt[headersLen:])
 
 	item.numMerged++
 	return coalesceSuccess
@@ -869,7 +835,7 @@ func (vs *writeBuffers) applyUDPCoalesceAccounting() error {
 					gsoSize:   item.gsoSize,
 					csumStart: uint16(item.iphLen), csumOffset: 6,
 				}
-				pkt := vs.pks_buff[item.bufsIndex][virtioNetHdrLen:]
+				pkt := vs.pktsbuff[item.bufsIndex][virtioNetHdrLen:]
 				hdr.gsoType = unix.VIRTIO_NET_HDR_GSO_UDP_L4
 				if item.key.isV6 {
 					binary.BigEndian.PutUint16(pkt[4:],
@@ -881,7 +847,7 @@ func (vs *writeBuffers) applyUDPCoalesceAccounting() error {
 					binary.BigEndian.PutUint16(pkt[10:], iphCSum)
 				}
 				err := hdr.encodeVirtioHeader(
-					vs.pks_buff[item.bufsIndex][:])
+					vs.pktsbuff[item.bufsIndex][:])
 				if err != nil {
 					return err
 				}
@@ -894,15 +860,15 @@ func (vs *writeBuffers) applyUDPCoalesceAccounting() error {
 					addrOffset = ipv6SrcAddrOffset
 				}
 				srcAddrAt := virtioNetHdrLen + addrOffset
-				srcAddr := vs.pks_buff[item.bufsIndex][srcAddrAt : srcAddrAt+addrLen]
-				dstAddr := vs.pks_buff[item.bufsIndex][srcAddrAt+addrLen : srcAddrAt+addrLen*2]
+				srcAddr := vs.pktsbuff[item.bufsIndex][srcAddrAt : srcAddrAt+addrLen]
+				dstAddr := vs.pktsbuff[item.bufsIndex][srcAddrAt+addrLen : srcAddrAt+addrLen*2]
 				psum := pseudoHeaderChecksumNoFold(unix.IPPROTO_UDP, srcAddr,
 					dstAddr, uint16(len(pkt)-int(item.iphLen)))
 				binary.BigEndian.PutUint16(pkt[hdr.csumStart+hdr.csumOffset:],
 					checksum([]byte{}, psum))
 			} else {
 				hdr := virtioNetHdr{}
-				err := hdr.encodeVirtioHeader(vs.pks_buff[item.bufsIndex][:])
+				err := hdr.encodeVirtioHeader(vs.pktsbuff[item.bufsIndex][:])
 				if err != nil {
 					return err
 				}
