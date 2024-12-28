@@ -28,46 +28,85 @@ This reduces the number of system calls required and consequently improves perfo
 For sake of simplicity, in the source code below, setting the IP address on the tunnel interface is done using the ip command. However, for a production environment, it's recommended to use the kernel's netlink APIs directly.
 
 ```go
-// request new tun device from kernel
-device, err := tunnel.New(tunnel.Config{})
-if err != nil {
-	panic(err)
+func someVPNTunnelService() {
+	// request new tun device from kernel
+	device, err := tunnel.New(tunnel.Config{})
+	if err != nil {
+		panic(err)
+	}
+
+	// setting ip by using ip command 
+	ipa := "192.168.87.1/24"
+	cmd := exec.Command("/usr/bin/ip", "addr", "add", ipa, "dev", device.Name())
+	if err := cmd.Run(); err!= nil {
+		panic(err)
+	}
+
+	// setting interface up
+	cmd := exec.Command("/usr/bin/ip", "link", "set", device.Name(), "up")
+	if err := cmd.Run(); err!= nil {
+    	panic(err)
+	}
+
+	// conn can be any type of ReadWriteCloser, typically a network connection  
+	conn := someIoReadWriteCloser() 
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// read from conn and write to tun device
+	go func() {
+		defer device.Close()
+		writeToTun(device, conn)
+		wg.Done()
+	}()
+
+	// read from tun device and write to conn
+	go func() {
+		defer conn.Close()
+		io.Copy(conn, device)
+		wg.Done()
+	}()
+	wg.Wait()
 }
 
-// setting ip by using ip command 
-ipa := "192.168.87.1/24"
-cmd := exec.Command("/usr/bin/ip", "addr", "add", ipa, "dev", device.Name())
-if err := cmd.Run(); err!= nil {
-    panic(err)
+func writeToTun(dst io.Writer, src io.Reader) error {
+	// alloc buffer for ip packets:
+	// note: using a small buffer diminishes the advantages of
+	// GSO and GRO because the number of system calls increases
+	buff := make([]byte, 32*1024)
+	p_left := 0 // unwritten data position
+	for {
+		// read from connection
+		nr, err := src.Read(buff[p_left:])
+		if err != nil {
+			return err
+		}
+		// if there is any data left from the previous write, take it into account
+		if p_left > 0 {
+			nr += p_left
+			p_left = 0
+		}
+		// write to tun device
+		// if the err is short or fragmented packet, we should continue
+		// reading from the connection until the packet is fully received
+		nw, err := dst.Write(buff[:nr])
+		if err != nil && !shortDataErr(err) {
+			return err
+		}
+		// we couldn't write all the data we read
+		// the unwritten data will be buffered for the next time
+		if nr > nw {
+			p_left = copy(buff, buff[nw:nr]) // move unwritten data to the head
+		}
+	}
 }
 
-// setting interface up
-cmd := exec.Command("/usr/bin/ip", "link", "set", device.Name(), "up")
-if err := cmd.Run(); err!= nil {
-    panic(err)
+func shortDataErr(err error) bool {
+	// check if err is fragmented or short packets
+	return errors.Is(err, tunnel.ErrFragmentedPacket) ||
+		errors.Is(err, tunnel.ErrShortPacket)
 }
-
-// conn can be any type of ReadWriteCloser, typically a network connection  
-conn := someIoReadWriteCloser() 
-
-var wg sync.WaitGroup
-wg.Add(2)
-
-// read from conn and write to tun device
-go func() {
-	defer device.Close()
-	io.Copy(device, conn)
-	wg.Done()
-}()
-
-// read from tun device and write to conn
-go func() {
-	defer conn.Close()
-	io.Copy(conn, device)
-	wg.Done()
-}()
-
-wg.Wait()
 
 ```
 
