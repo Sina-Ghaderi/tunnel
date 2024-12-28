@@ -110,7 +110,7 @@ func shortDataErr(err error) bool {
 
 ```
 
-Checkout the [_example](_example) for a simple vpn over tcp daemon (not suitable for production environment)
+Checkout the [example](example) for a simple vpn over tcp daemon
 
 
 ### Tunnel Configuration Structure
