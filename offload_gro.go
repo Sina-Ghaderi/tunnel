@@ -388,6 +388,9 @@ func (v *tunDevice) bufferPackets(buff []byte) (int, error) {
 
 func (v *tunDevice) slicePackets(buff []byte) (int, error) {
 	var nextPacketIndex int
+	if len(buff) < 1 {
+		return nextPacketIndex, nil
+	}
 	done, err := v.bufferPackets(buff)
 	if err != nil {
 		return nextPacketIndex, err

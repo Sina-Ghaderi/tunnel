@@ -247,7 +247,7 @@ func vnetHdrWrite(dev *tunDevice, buff []byte) (int, error) {
 
 	nw, err := dev.slicePackets(buff)
 	if err != nil {
-		return 0, err
+		return nw, err
 	}
 	if err := dev.virtioMakeGro(); err != nil {
 		return 0, err
