@@ -179,7 +179,8 @@ func writeToTun(dst io.Writer, src io.Reader) error {
 		// we couldn't write all the data we read
 		// the unwritten data will be buffered for the next time
 		if nr > nw {
-			p_left = copy(buff, buff[nw:nr]) // move unwritten data to the head
+			// move unwritten data to the head
+			p_left = copy(buff, buff[nw:nr])
 		}
 
 	}
