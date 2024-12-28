@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"log"
@@ -60,17 +61,17 @@ func clientDialTo(dialAddr string, ip string) {
 
 	go func() {
 		defer tund.Close()
-		nt, err := io.Copy(tund, conn)
+		err := writeToTun(tund, conn)
 		if err != nil {
-			log.Fatalf("fatal: %v at: %d", err, nt)
+			log.Fatalf("fatal: %v", err)
 		}
 		wg.Done()
 	}()
 	go func() {
 		defer conn.Close()
-		nt, err := io.Copy(conn, tund)
+		_, err := io.Copy(conn, tund)
 		if err != nil {
-			log.Fatalf("fatal: %v at: %d", err, nt)
+			log.Fatalf("fatal: %v", err)
 		}
 		wg.Done()
 	}()
@@ -92,7 +93,8 @@ func serverListen(listenAddr string, ip string) {
 			log.Printf("accept: %v", err)
 		}
 
-		// this is an example we don't handle all clients simultaneously.
+		// this is a demonstration, for sake of simplicity
+		// we don't handle all clients simultaneously
 		serverConn(conn, ip)
 	}
 }
@@ -120,7 +122,7 @@ func serverConn(conn net.Conn, ip string) {
 
 	go func() {
 		defer tund.Close()
-		io.Copy(tund, conn)
+		writeToTun(tund, conn)
 		wg.Done()
 	}()
 	go func() {
@@ -144,6 +146,47 @@ func setIfaceUP(ifname string) error {
 	return cmd.Run()
 }
 
-func writeToTun(tunDst io.Writer, src io.Reader) {
+func writeToTun(dst io.Writer, src io.Reader) error {
 
+	// alloc buffer for ip packets:
+	// note: using a small buffer diminishes the advantages of
+	// GSO and GRO because the number of system calls increases
+	buff := make([]byte, 32*1024)
+	p_left := 0 // unwritten data position
+
+	for {
+
+		// read from connection
+		nr, err := src.Read(buff[p_left:])
+		if err != nil {
+			return err
+		}
+
+		// if there is any data left from the previous write, take it into account
+		if p_left > 0 {
+			nr += p_left
+			p_left = 0
+		}
+
+		// write to tun device
+		// if the err is short or fragmented packet, we should continue
+		// reading from the connection until the packet is fully received
+		nw, err := dst.Write(buff[:nr])
+		if err != nil && !shortDataErr(err) {
+			return err
+		}
+
+		// we couldn't write all the data we read
+		// the unwritten data will be buffered for the next time
+		if nr > nw {
+			p_left = copy(buff, buff[nw:nr]) // move unwritten data to the head
+		}
+
+	}
+}
+
+func shortDataErr(err error) bool {
+	// check if err is fragmented or short packets
+	return errors.Is(err, tunnel.ErrFragmentedPacket) ||
+		errors.Is(err, tunnel.ErrShortPacket)
 }
