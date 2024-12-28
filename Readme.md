@@ -5,7 +5,6 @@ generic segment/receive offloads ([gso](https://docs.kernel.org/networking/segme
 
 
 - supports gso and gro for both udp* and tcp
-- data gets reassembled when user does not provide hole ipv4 or ipv6 packet in one write method call
 - reduce number of read/write syscalls when gso/gro is enabled
 
 > [!NOTE]  
