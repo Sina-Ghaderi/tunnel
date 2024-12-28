@@ -48,11 +48,25 @@ type tunDevice struct {
 	udpGsoEnabled bool
 }
 
+// Name returns tun interface name
 func (iface platformMethods) Name() string { return iface.name }
 
-func (dev *tunDevice) Read(b []byte) (int, error)  { return dev.rwHandler[0](dev, b) }
+// Read reads packets from the tunnel
+func (dev *tunDevice) Read(b []byte) (int, error) { return dev.rwHandler[0](dev, b) }
+
+// Write writes packets to the tunnel
+// when gso/gro is enabled, it is recommended to provide the data as a
+// sequence of packets in a buffer to the write method, in this case, the first IP
+// packet must be valid; otherwise, an error is returned.
+// if subsequent sequential packets in the buffer are incorrect or corrupted, a nil error
+// and the number of bytes written up to the corrupted packet are returned. for the first
+// packet in the buffer, if the error is ErrShortPacket or ErrFragmentedPacket, it is
+// usually because the packet is incomplete in the buffer. In this situation,
+// the user may retry writing the complete packet again
 func (dev *tunDevice) Write(b []byte) (int, error) { return dev.rwHandler[1](dev, b) }
-func (dev *tunDevice) Close() error                { return dev.file.Close() }
+
+// Close closes the tunnel
+func (dev *tunDevice) Close() error { return dev.file.Close() }
 
 func genericRead(dev *tunDevice, buff []byte) (int, error)  { return dev.file.Read(buff) }
 func genericWrite(dev *tunDevice, buff []byte) (int, error) { return dev.file.Write(buff) }
