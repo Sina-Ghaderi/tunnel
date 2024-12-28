@@ -331,7 +331,7 @@ func ipHeadersCanCoalesce(pktA, pktB []byte) bool {
 func (v *tunDevice) bufferIPv4Packet(buff []byte) (int, error) {
 
 	if len(buff) < minIPv4packetSize {
-		return 0, fmt.Errorf("tunnel: virtio write: short ipv4 header write")
+		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrShortPacket)
 	}
 
 	headerLen := int(buff[0]&0x0F) << 2
@@ -344,25 +344,24 @@ func (v *tunDevice) bufferIPv4Packet(buff []byte) (int, error) {
 		return 0, fmt.Errorf("tunnel: virtio write: invalid ipv4 packet len(%d)", totalLen)
 	}
 	if totalLen > len(buff) {
-		return 0, fmt.Errorf("tunnel: virtio write: fragmented ipv4 packet")
+		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrFragmentedPacket)
 	}
 	return v.copyFromUser(buff, totalLen), nil
 }
 
 func (v *tunDevice) bufferIPv6Packet(buff []byte) (int, error) {
 	if len(buff) < minIPv6packetSize {
-		return 0, fmt.Errorf("tunnel: virtio write: short ipv4 packet write")
+		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrShortPacket)
 	}
 
 	payloadLen := int(binary.BigEndian.Uint16(buff[4:]))
 	totalLen := payloadLen + minIPv6packetSize
 
 	if totalLen > maxPacketLen || totalLen < minIPv6packetSize {
-		return 0,
-			fmt.Errorf("tunnel: virtio write: invalid ipv6 packet len(%d)", totalLen)
+		return 0, fmt.Errorf("tunnel: virtio write: invalid ipv6 packet len(%d)", totalLen)
 	}
 	if totalLen > len(buff) {
-		return 0, fmt.Errorf("tunnel: virtio write: fragmented ipv6 packet")
+		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrFragmentedPacket)
 	}
 	return v.copyFromUser(buff, totalLen), nil
 }

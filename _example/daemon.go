@@ -143,3 +143,7 @@ func setIfaceUP(ifname string) error {
 	cmd.Stderr = os.Stdout
 	return cmd.Run()
 }
+
+func writeToTun(tunDst io.Writer, src io.Reader) {
+
+}

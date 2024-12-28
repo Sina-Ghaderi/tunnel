@@ -203,8 +203,7 @@ func vnetHdrRead(dev *tunDevice, buff []byte) (int, error) {
 	defer dev.tunReadMux.Unlock()
 
 	defer func() {
-		if len(dev.r_buff.unreadPtr) == 0 &&
-			cap(dev.r_buff.copybuff) > rcveBuffLen {
+		if len(dev.r_buff.unreadPtr) == 0 && cap(dev.r_buff.copybuff) > rcveBuffLen {
 			dev.r_buff.unreadPtr = nil
 			dev.r_buff.copybuff = dev.r_buff.copybuff[:rcveBuffLen:rcveBuffLen]
 		}
