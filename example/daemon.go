@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"io"
 	"log"
@@ -169,25 +168,17 @@ func writeToTun(dst io.Writer, src io.Reader) error {
 		}
 
 		// write to tun device
-		// if the err is short or fragmented packet, we should continue
-		// reading from the connection until the packet is fully received
 		nw, err := dst.Write(buff[:nr])
-		if err != nil && !shortDataErr(err) {
+		if err != nil {
 			return err
 		}
 
 		// we couldn't write all the data we read
-		// the unwritten data will be buffered for the next time
+		// the unwritten data will be buffered for the next write call
 		if nr > nw {
 			// move unwritten data to the head
 			p_left = copy(buff, buff[nw:nr])
 		}
 
 	}
-}
-
-func shortDataErr(err error) bool {
-	// check if err is fragmented or short packets
-	return errors.Is(err, tunnel.ErrFragmentedPacket) ||
-		errors.Is(err, tunnel.ErrShortPacket)
 }
