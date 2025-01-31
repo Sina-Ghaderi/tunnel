@@ -60,7 +60,7 @@ func (dev *tunDevice) Read(b []byte) (int, error) { return dev.rwHandler[0](dev,
 // packet must be valid; otherwise, an error is returned.
 // if subsequent sequential packets in the buffer are incorrect or corrupted, a nil error
 // and the number of bytes written up to the corrupted packet are returned. for the first
-// packet in the buffer, if the error is ErrShortPacket or ErrFragmentedPacket, it is
+// packet in the buffer, if returned written value is zero and nil error, it is
 // usually because the packet is incomplete in the buffer. In this situation,
 // the user may retry writing the complete packet again
 func (dev *tunDevice) Write(b []byte) (int, error) { return dev.rwHandler[1](dev, b) }

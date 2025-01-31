@@ -92,6 +92,11 @@ type udpGROTable struct {
 	itemsPool   [][]udpGROItem
 }
 
+var (
+	errShortPacket      = errors.New("write a short ipv4 or ipv6 packet")
+	errFragmentedPacket = errors.New("write a fragmented ipv4 or ipv6 packet")
+)
+
 func newUDPGROTable() *udpGROTable {
 	u := &udpGROTable{
 		itemsByFlow: make(map[udpFlowKey][]udpGROItem, pktBuffArrs),
@@ -331,7 +336,7 @@ func ipHeadersCanCoalesce(pktA, pktB []byte) bool {
 func (v *tunDevice) bufferIPv4Packet(buff []byte) (int, error) {
 
 	if len(buff) < minIPv4packetSize {
-		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrShortPacket)
+		return 0, errShortPacket
 	}
 
 	headerLen := int(buff[0]&0x0F) << 2
@@ -344,14 +349,14 @@ func (v *tunDevice) bufferIPv4Packet(buff []byte) (int, error) {
 		return 0, fmt.Errorf("tunnel: virtio write: invalid ipv4 packet len(%d)", totalLen)
 	}
 	if totalLen > len(buff) {
-		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrFragmentedPacket)
+		return 0, errFragmentedPacket
 	}
 	return v.copyFromUser(buff, totalLen), nil
 }
 
 func (v *tunDevice) bufferIPv6Packet(buff []byte) (int, error) {
 	if len(buff) < minIPv6packetSize {
-		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrShortPacket)
+		return 0, errShortPacket
 	}
 
 	payloadLen := int(binary.BigEndian.Uint16(buff[4:]))
@@ -361,7 +366,7 @@ func (v *tunDevice) bufferIPv6Packet(buff []byte) (int, error) {
 		return 0, fmt.Errorf("tunnel: virtio write: invalid ipv6 packet len(%d)", totalLen)
 	}
 	if totalLen > len(buff) {
-		return 0, fmt.Errorf("tunnel: virtio write: %w", ErrFragmentedPacket)
+		return 0, errFragmentedPacket
 	}
 	return v.copyFromUser(buff, totalLen), nil
 }
@@ -393,6 +398,9 @@ func (v *tunDevice) slicePackets(buff []byte) (int, error) {
 	}
 	done, err := v.bufferPackets(buff)
 	if err != nil {
+		if err == errFragmentedPacket || err == errShortPacket {
+			return nextPacketIndex, nil
+		}
 		return nextPacketIndex, err
 	}
 	nextPacketIndex += done
