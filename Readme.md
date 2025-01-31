@@ -87,10 +87,8 @@ func writeToTun(dst io.Writer, src io.Reader) error {
 			p_left = 0
 		}
 		// write to tun device
-		// if the err is short or fragmented packet, we should continue
-		// reading from the connection until the packet is fully received
 		nw, err := dst.Write(buff[:nr])
-		if err != nil && !shortDataErr(err) {
+		if err != nil {
 			return err
 		}
 		// we couldn't write all the data we read
@@ -101,13 +99,6 @@ func writeToTun(dst io.Writer, src io.Reader) error {
 		}
 	}
 }
-
-func shortDataErr(err error) bool {
-	// check if err is fragmented or short packets
-	return errors.Is(err, tunnel.ErrFragmentedPacket) ||
-		errors.Is(err, tunnel.ErrShortPacket)
-}
-
 ```
 
 Checkout the [example](example) for a simple vpn over tcp daemon
